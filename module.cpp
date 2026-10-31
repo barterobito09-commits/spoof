@@ -1,6 +1,7 @@
 // Comatoze Zygisk: spoof Build.MANUFACTURER & Build.MODEL per aplikasi.
 // Alur: preAppSpecialize -> tanya companion (root) apakah proses ini ada di daftar
-//       /data/adb/ultrapower/spoof_apps -> postAppSpecialize -> set field Build lewat JNI.
+//       /data/adb/ultrapower/spoof_apps -> postAppSpecialize -> set field Build lewat JNI
+//       (MANUFACTURER & MODEL; plus BRAND/DEVICE/PRODUCT bila "mode lengkap" aktif untuk app itu).
 // Companion dipakai karena proses zygote tidak boleh membaca /data/adb langsung (SELinux).
 #include <android/log.h>
 #include <fcntl.h>
@@ -50,8 +51,9 @@ static void companion_handler(int fd) {
     std::string proc(n, '\0');
     if (!read_full(fd, &proc[0], n)) return;
     std::string man, model, out;
+    bool full = false;
     if (access(kConfig, R_OK) != 0) LOGI("companion: config tidak terbaca (%s)", kConfig);
-    if (comatoze_lookup(kConfig, proc, man, model)) out = man + "\n" + model;
+    if (comatoze_lookup(kConfig, proc, man, model, full)) out = man + "\n" + model + "\n" + (full ? "1" : "0");
     LOGI("companion: %s -> %s", proc.c_str(), out.empty() ? "miss" : "HIT");
     uint32_t m = static_cast<uint32_t>(out.size());
     write_full(fd, &m, sizeof(m));
@@ -106,8 +108,11 @@ public:
 
         size_t nl = reply.find('\n');
         if (nl == std::string::npos) return unload();
+        size_t nl2 = reply.find('\n', nl + 1);
+        if (nl2 == std::string::npos) return unload();
         man_ = reply.substr(0, nl);
-        model_ = reply.substr(nl + 1);
+        model_ = reply.substr(nl + 1, nl2 - nl - 1);
+        full_ = reply.compare(nl2 + 1, std::string::npos, "1") == 0;
         if (man_.empty() || model_.empty()) return unload();
         apply_ = true;
         proc_ = proc;
@@ -122,8 +127,13 @@ public:
         }
         set_build_field(env_, cls, "MANUFACTURER", man_);
         set_build_field(env_, cls, "MODEL", model_);
+        if (full_) {  // mode lengkap: brand = manufacturer, device & product = kode model
+            set_build_field(env_, cls, "BRAND", man_);
+            set_build_field(env_, cls, "DEVICE", model_);
+            set_build_field(env_, cls, "PRODUCT", model_);
+        }
         env_->DeleteLocalRef(cls);
-        LOGI("spoof %s -> %s %s", proc_.c_str(), man_.c_str(), model_.c_str());
+        LOGI("spoof %s -> %s %s%s", proc_.c_str(), man_.c_str(), model_.c_str(), full_ ? " (lengkap)" : "");
     }
 
 private:
@@ -132,6 +142,7 @@ private:
     zygisk::Api *api_ = nullptr;
     JNIEnv *env_ = nullptr;
     bool apply_ = false;
+    bool full_ = false;
     std::string man_, model_, proc_;
 };
 
