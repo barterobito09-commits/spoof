@@ -50,7 +50,9 @@ static void companion_handler(int fd) {
     std::string proc(n, '\0');
     if (!read_full(fd, &proc[0], n)) return;
     std::string man, model, out;
+    if (access(kConfig, R_OK) != 0) LOGI("companion: config tidak terbaca (%s)", kConfig);
     if (comatoze_lookup(kConfig, proc, man, model)) out = man + "\n" + model;
+    LOGI("companion: %s -> %s", proc.c_str(), out.empty() ? "miss" : "HIT");
     uint32_t m = static_cast<uint32_t>(out.size());
     write_full(fd, &m, sizeof(m));
     if (m) write_full(fd, out.data(), m);
@@ -86,7 +88,10 @@ public:
         if (proc.empty() || proc.size() > 256) return unload();
 
         int fd = api_->connectCompanion();
-        if (fd < 0) return unload();
+        if (fd < 0) {
+            LOGI("connectCompanion gagal untuk %s", proc.c_str());
+            return unload();
+        }
         uint32_t n = static_cast<uint32_t>(proc.size());
         uint32_t m = 0;
         std::string reply;
@@ -97,7 +102,7 @@ public:
             ok = read_full(fd, &reply[0], m);
         }
         close(fd);
-        if (!ok) return unload();
+        if (!ok) return unload();  // balasan kosong = proses ini tidak ada di daftar (normal)
 
         size_t nl = reply.find('\n');
         if (nl == std::string::npos) return unload();
